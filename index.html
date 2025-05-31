@@ -273,31 +273,29 @@
     box-shadow: 0 6px 18px var(--shadow);
   }
 
-  .card .img-container {
-    width: 100%;
-    aspect-ratio: 5/4;    
-    background: rgba(73, 73, 73, 0.2);
-    padding: 0.25rem;
-    margin-bottom: 0.5rem;
+.card .img-container {
+  position: relative;
+  width: 100%;
+  height: 120px !important;      
+  padding: 0.2rem !important; 
+  background: rgba(73,73,73,0.2); 
+  overflow: hidden;        
+}
 
-    display: flex;
-    align-items: center;  
-    justify-content: center;      
-  }
+.card .img-container picture,
+.card .img-container img {
+  position: absolute;    
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;  
+  object-position: center center;
+  
+  -webkit-object-fit: contain;
+  -webkit-object-position: center center;
+}
 
-  .card .img-container picture {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .card .img-container picture img {
-    max-width: 80%;     
-    max-height: 80%;
-    object-fit: contain;         
-    display: block;
-    margin: auto;                 
-  }
 
   .info {
     padding: 0.5rem;
@@ -640,7 +638,39 @@
     opacity: 0;
   }
 
-  
+.name-row a {
+  text-decoration: none;
+  color: inherit;        
+}
+
+.name-row a:hover,
+.name-row a:focus {
+  text-decoration: none; 
+}
+.img-container {
+  position: relative;
+}
+
+/* default for non-normal (under variant badge) */
+.exist-count-box {
+  position: absolute;
+  top: 2.25rem;
+  right: 0.5rem;
+  background: rgba(0,0,0,0.75);
+  color: #fff;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* normals get shoved back up under the picture’s top edge */
+.exist-count-box.normal {
+  top: 0.5rem;
+}
+
     </style>
   </head>
   <body>
@@ -680,7 +710,7 @@
         </div>
       </div>
       <main id="cards"></main>
-    </div>
+</div>
 <script>
   function debounce(fn, wait = 250) {
     let timer;
@@ -691,9 +721,17 @@
   }
 
   const endpoints = {
-    info:  'https://values.hixand.xyz/petinfo.json',
-    values:'https://values.hixand.xyz/pet-values.json'
+    info:       'https://values.hixand.xyz/petinfo.json',
+    values:     'https://values.hixand.xyz/pet-values.json',
+    existCount: 'https://values.hixand.xyz/existcount.json'
   };
+
+  const trendIcons = {
+    up:     'https://images.hixand.xyz/upwards.webp',
+    down:   'https://images.hixand.xyz/downwards.webp',
+    stable: 'https://images.hixand.xyz/stable.webp'
+  };
+
   let pets = [], activeCategory = 'All', showShiny = false, showMythic = false;
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -703,15 +741,15 @@
     ['Shiny','Mythic'].forEach(type =>
       document.getElementById('btn'+type).onclick = e => {
         if (type==='Shiny') showShiny = !showShiny;
-        else             showMythic = !showMythic;
+        else                showMythic = !showMythic;
         e.target.classList.toggle('active');
         renderCards();
       }
     );
     document.getElementById('search')
-            .addEventListener('input', debounce(renderCards, 300));
+      .addEventListener('input', debounce(renderCards, 300));
     document.getElementById('sort')
-            .addEventListener('change', renderCards);
+      .addEventListener('change', renderCards);
 
     const custom = document.querySelector('.custom-select');
     const trigger = custom.querySelector('.custom-select-trigger');
@@ -730,147 +768,229 @@
 
     loadData();
   });
+function setCategory(cat) {
+  activeCategory = cat;
+  document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('cat' + cat).classList.add('active');
+  renderCards();
+}
 
-  function setCategory(cat) {
-    activeCategory = cat;
-    document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('cat'+cat).classList.add('active');
-    renderCards();
-  }
+async function loadData() {
+  try {
+    const [infoRes, valueRes, existRes] = await Promise.all([
+      fetch(endpoints.info),
+      fetch(endpoints.values),
+      fetch(endpoints.existCount)
+    ]);
+    const infoJson  = await infoRes.json(),
+          valueJson = await valueRes.json(),
+          existJson = await existRes.json();
 
-  async function loadData() {
-    try {
-      const [infoRes, valueRes] = await Promise.all([
-        fetch(endpoints.info),
-        fetch(endpoints.values)
-      ]);
-      const infoJson  = await infoRes.json(),
-            valueJson = await valueRes.json();
+    pets = [];
+    infoJson.forEach(p => {
+      const vData = valueJson.find(v => v.pet_name === p.pet_name) || {};
 
-      pets = [];
-      infoJson.forEach(p => {
-        const vData = valueJson.find(v => v.pet_name === p.pet_name) || {};
-        p.variants.forEach(v => {
-          const stats = (vData.variants || []).find(x => x.name === v.name) || {};
-          pets.push({
-            pet_name: p.pet_name,
-            title:    p.title,
-            variant:  v.name,
-            image:    v.image,
-            bubbles:  v.stats.base.bubbles,
-            coins:    v.stats.base.coins,
-            gems:     v.stats.base.gems,
-            value:    Number(stats.value)  || 0,
-            demand:   stats.demand         || 'Low'
-          });
+      p.variants.forEach(v => {
+        const stats    = (vData.variants || []).find(x => x.name === v.name) || {};
+        const rawValue = stats.value;
+        const lastVariantValue = (vData.variants?.length)
+          ? vData.variants[vData.variants.length - 1].value
+          : rawValue;
+
+        const usedFallback = !rawValue || rawValue === 'n/a';
+        const chosenValue = usedFallback ? lastVariantValue : rawValue;
+
+        const isOC = chosenValue === 'O/C';
+        let numericValue = 0;
+        if (!isOC) {
+          const parsed = Number(chosenValue);
+          numericValue = isNaN(parsed) ? 0 : parsed;
+        }
+
+        const key = v.name === 'Normal'
+                  ? p.pet_name
+                  : `${v.name} ${p.pet_name}`;
+        const existCount = existJson[key] != null
+                         ? Number(existJson[key])
+                         : null;
+
+        pets.push({
+          pet_name:      p.pet_name,
+          egg_id:        p.egg_id,
+          title:         p.title,
+          variant:       v.name,
+          image:         v.image,
+          bubbles:       p.stats?.base?.bubbles ?? v.stats.base.bubbles,
+          coins:         p.stats?.base?.coins   ?? v.stats.base.coins,
+          gems:          p.stats?.base?.gems    ?? v.stats.base.gems,
+
+          value:         numericValue,
+          originalValue: chosenValue,
+          isOC:          isOC,
+
+          demand:        stats.demand || 'Low',
+          trend:         stats.trend  || 'stable',
+          existCount,
+          usedFallback,
+          valueIndex:    valueJson.findIndex(vv => vv.pet_name === p.pet_name)
         });
       });
+    });
 
-      renderCards();
-    } catch(err) {
-      console.error('Failed to load data:', err);
+    renderCards();
+  } catch (err) {
+    console.error('Failed to load data:', err);
+  }
+}
+
+
+  function renderCards() {
+  const container = document.getElementById('cards');
+  container.innerHTML = '';
+
+  let filtered = pets.filter(p => {
+    if (showShiny && showMythic)   return p.variant === 'Shiny Mythic';
+    if (showShiny)                 return p.variant === 'Shiny';
+    if (showMythic)                return p.variant === 'Mythic';
+    return p.variant === 'Normal';
+  });
+
+  if (activeCategory !== 'All') {
+    if (activeCategory === 'Robux') {
+      filtered = filtered.filter(p => p.egg_id?.toLowerCase() === 'robux');
+    } else {
+      filtered = filtered.filter(p => p.title?.toLowerCase() === activeCategory.toLowerCase());
     }
   }
 
-  function renderCards() {
-    const container = document.getElementById('cards');
-    container.innerHTML = '';
-    let filtered = pets.filter(p => {
-      if (showShiny && showMythic)   return p.variant === 'Shiny Mythic';
-      if (showShiny)                 return p.variant === 'Shiny';
-      if (showMythic)                return p.variant === 'Mythic';
-      return p.variant === 'Normal';
-    });
+  const q = document.getElementById('search').value.toLowerCase();
+  if (q) {
+    filtered = filtered.filter(p => p.pet_name.toLowerCase().includes(q));
+  }
 
+  const sv = document.querySelector('.custom-option.selected').dataset.value;
+  const demandOrder = ['Low','Medium','High','Very High','Insane'];
+filtered.sort((a, b) => {
+  if (a.value !== 0 && b.value === 0) return -1;
+  if (a.value === 0 && b.value !== 0) return 1;
 
-    if (activeCategory !== 'All') {
-      filtered = filtered.filter(p => p.title === activeCategory);
+  if (a.value === 0 && b.value === 0) {
+    if (a.isOC && !b.isOC) return -1;
+    if (!a.isOC && b.isOC) return 1;
+  }
+
+  if (a.usedFallback !== b.usedFallback) {
+    return a.usedFallback ? 1 : -1;
+  }
+  if (a.usedFallback && b.usedFallback) {
+    return b.valueIndex - a.valueIndex;
+  }
+
+  const sv = document.querySelector('.custom-option.selected').dataset.value;
+  const demandOrder = ['Low','Medium','High','Very High','Insane'];
+  switch (sv) {
+    case 'value-desc':
+      return b.value - a.value;
+    case 'value-asc':
+      return a.value - b.value;
+    case 'demand-desc':
+      return demandOrder.indexOf(b.demand) - demandOrder.indexOf(a.demand);
+    case 'demand-asc':
+      return demandOrder.indexOf(a.demand) - demandOrder.indexOf(b.demand);
+    case 'name-asc':
+      return a.pet_name.localeCompare(b.pet_name);
+    case 'name-desc':
+      return b.pet_name.localeCompare(a.pet_name);
+    default:
+      return 0;
+  }
+});
+
+  filtered.forEach(p => {
+    const bCount = Math.floor(p.bubbles),
+          cCount = Math.floor(p.coins),
+          gCount = Math.floor(p.gems),
+          level  = p.demand,
+          cls    = level.toLowerCase().replace(/\s+/g, '-');
+
+    let displayValue;
+    if (p.originalValue && !/^\d+$/.test(p.originalValue)) {
+      displayValue = p.originalValue;
+    } else {
+      displayValue = p.value.toLocaleString();
     }
+    const trendIconUrl = trendIcons[p.trend] || trendIcons.stable,
+          variantParam = encodeURIComponent(p.variant.toLowerCase()),
+          slug         = p.pet_name.replace(/\s+/g, '-'),
+          petUrl       = `https://bgsi.space/pet/${encodeURIComponent(slug)}?variant=${variantParam}`;
 
-    const q = document.getElementById('search').value.toLowerCase();
-    if (q) filtered = filtered.filter(p =>
-      p.pet_name.toLowerCase().includes(q)
-    );
+    const gemHTML = gCount > 0
+      ? `<div class="stat">
+           <img src="https://images.hixand.xyz/gems.webp"
+                class="stat-icon" alt="Gems">${gCount}
+         </div>`
+      : '';
 
-    const sv = document.querySelector('.custom-option.selected').dataset.value;
-    const demandOrder = ['Low','Medium','High','Very High','Insane'];
-    filtered.sort((a,b) => {
-      switch (sv) {
-        case 'value-desc':  return b.value - a.value;
-        case 'value-asc':   return a.value - b.value;
-        case 'demand-desc':
-          return demandOrder.indexOf(b.demand)
-               - demandOrder.indexOf(a.demand);
-        case 'demand-asc':
-          return demandOrder.indexOf(a.demand)
-               - demandOrder.indexOf(b.demand);
-        case 'name-asc':    return a.pet_name.localeCompare(b.pet_name);
-        case 'name-desc':   return b.pet_name.localeCompare(a.pet_name);
-        default: return 0;
-      }
-    });
+    const existBox = (p.existCount != null)
+      ? `<div class="exist-count-box${p.variant === 'Normal' ? ' normal' : ''}">
+           ${p.existCount.toLocaleString()}
+         </div>`
+      : '';
 
-    filtered.forEach(p => {
-const bCount = Math.floor(p.bubbles),
-      cCount = Math.floor(p.coins),
-      gCount = Math.floor(p.gems),
-      level  = p.demand;      
-
-const cls    = level
-                   .toLowerCase()
-                   .replace(/\s+/g, '-');
-      const gemHTML = gCount > 0
-        ? `<div class="stat">
-             <img src="https://images.hixand.xyz/gems.webp"
-                  class="stat-icon" alt="Gems">${gCount}
-           </div>`
-        : '';
-
-      const card = document.createElement('div');
-      card.className = 'card';
-      card.innerHTML = `
-        <div class="img-container">
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="img-container">
+        <a href="${petUrl}">
           <picture>
             <source type="image/webp"
-                    srcset="${p.image.replace(/\.\w+$/,'.webp')}">
+                    srcset="${p.image.replace(/\.\w+$/, '.webp')}">
             <img loading="lazy"
                  src="${p.image}"
                  alt="${p.pet_name}">
           </picture>
+          ${p.variant !== 'Normal'
+            ? `<div class="exist-badge">${p.variant}</div>`
+            : ''}
+          ${existBox}
+        </a>
+      </div>
+      <div class="info">
+        <img src="${trendIconUrl}"
+             class="trend-icon"
+             alt="${p.trend} trend">
+        <div class="name-row">
+          <a href="${petUrl}"><h3>${p.pet_name}</h3></a>
+          <span class="demand-badge ${cls}">${level}</span>
         </div>
-        <div class="info">
-          <div class="name-row">
-            <h3>${p.pet_name}</h3>
-            <span class="demand-badge ${cls}">${level}</span>
+        <div class="stats-row">
+          <div class="stat">
+            <img src="https://images.hixand.xyz/bubblegum.webp"
+                 class="stat-icon" alt="Bubbles">${bCount}
           </div>
-          <div class="stats-row">
-            <div class="stat">
-              <img src="https://images.hixand.xyz/bubblegum.webp"
-                   class="stat-icon" alt="Bubbles">${bCount}
-            </div>
-            <div class="stat">
-              <img src="https://images.hixand.xyz/coins.webp"
-                   class="stat-icon" alt="Coins">${cCount}
-            </div>
-            ${gemHTML}
+          <div class="stat">
+            <img src="https://images.hixand.xyz/coins.webp"
+                 class="stat-icon" alt="Coins">${cCount}
           </div>
-          <hr style="border:1px solid var(--border);margin:0.5rem 0;">
-          <div class="value-block">
-            <div class="value-number">${p.value}</div>
-            <div class="value-label">Value</div>
-          </div>
-        </div>`;
+          ${gemHTML}
+        </div>
+        <hr style="border:1px solid var(--border);margin:0.5rem 0;">
+        <div class="value-block">
+          <div class="value-number">${displayValue}</div>
+          <div class="value-label">Value</div>
+        </div>
+      </div>`;
+    container.appendChild(card);
+  });
+}
 
-      container.appendChild(card);
-    });
-  }
-</script>
+</script> 
 
 
 
 
-  </body>
-  </html>
+
+
 <script>
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const host  = 'ws.hixand.xyz';
